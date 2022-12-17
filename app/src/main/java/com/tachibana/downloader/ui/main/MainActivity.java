@@ -237,14 +237,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-//        engine.deleteDownloads(false);
-//        clear.setOnClickListener((v) -> tabLayout.getTabAt(tabLayout.getSelectedTabPosition()));
         clear.setOnClickListener((v) -> {
-//            Handler mainHandler = new Handler(this.getMainLooper());
-//            Context thisContext = this;
-//            Thread thread = new Thread(() -> {
-//                DataRepository repo = RepositoryHelper.getDataRepository(thisContext);
-//                Log.e("test", String.valueOf(repo.getAllInfo()));
                 deleteAllDownloadsDialog = BaseAlertDialog.newInstance(
                         getString(R.string.deleting),
                         getString(R.string.delete_all_downloads),
@@ -255,9 +248,6 @@ public class MainActivity extends AppCompatActivity {
                         false);
                 var fm = getSupportFragmentManager();
                 deleteAllDownloadsDialog.show(fm, "delete_all_downloads_dialog");
-
-//            });
-//            thread.start();
         });
     }
 
@@ -349,11 +339,6 @@ public class MainActivity extends AppCompatActivity {
                     } else if (event.dialogTag.equals("delete_all_downloads_dialog")) {
                         switch (event.type) {
                             case POSITIVE_BUTTON_CLICKED:
-//                                Dialog dialog = deleteDownloadDialog.getDialog();
-//                                if (dialog != null && downloadForDeletion != null) {
-//                                    CheckBox withFile = dialog.findViewById(R.id.delete_with_file);
-//                                    deleteDownload(downloadForDeletion, withFile.isChecked());
-//                                }
                                 Context thisContext = this;
                                 Thread thread = new Thread(() -> {
                                     DataRepository repo = RepositoryHelper.getDataRepository(thisContext);
@@ -367,7 +352,6 @@ public class MainActivity extends AppCompatActivity {
                                 });
                                 thread.start();
                             case NEGATIVE_BUTTON_CLICKED:
-//                                downloadForDeletion = null;
                                 deleteAllDownloadsDialog.dismiss();
                                 break;
                         }
