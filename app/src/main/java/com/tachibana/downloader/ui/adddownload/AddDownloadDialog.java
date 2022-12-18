@@ -457,6 +457,7 @@ public class AddDownloadDialog extends DialogFragment {
         });
         binding.name.addTextChangedListener(new TextWatcher()
         {
+        warningFileExist = binding.fileExists;
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
 
