@@ -538,6 +538,10 @@ public class MainActivity extends AppCompatActivity {
         } else if (itemId == R.id.shutdown_app_menu) {
             closeOptionsMenu();
             shutdown();
+        } else if (itemId == R.id.import_menu) {
+            //TODO: Add functionality
+        } else if (itemId == R.id.export_menu) {
+            //TODO: Add functionality
         } else if (itemId == R.id.browser_menu) {
             startActivity(new Intent(this, BrowserActivity.class));
         }
