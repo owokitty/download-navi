@@ -455,9 +455,9 @@ public class AddDownloadDialog extends DialogFragment {
                 binding.layoutLink.setError(null);
             }
         });
+        warningFileExist = binding.fileExists;
         binding.name.addTextChangedListener(new TextWatcher()
         {
-        warningFileExist = binding.fileExists;
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
 
@@ -480,8 +480,8 @@ public class AddDownloadDialog extends DialogFragment {
                 binding.layoutName.setError(null);
             }
         });
-        binding.checksum.addTextChangedListener(new TextWatcher()
-        {
+
+        binding.savePath.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {
             }
@@ -494,6 +494,18 @@ public class AddDownloadDialog extends DialogFragment {
                     return;
                 }
                 warningFileExist.setVisibility(View.VISIBLE);
+            }
+
+            @Override
+            public void afterTextChanged(Editable s)
+            {
+            }
+        });
+
+        binding.checksum.addTextChangedListener(new TextWatcher()
+        {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
             }
 
             @Override
