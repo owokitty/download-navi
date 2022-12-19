@@ -21,6 +21,7 @@
 package com.tachibana.downloader.ui.main;
 
 import android.Manifest;
+import android.app.Activity;
 import android.app.Dialog;
 import android.app.SearchManager;
 import android.content.Context;
@@ -31,11 +32,15 @@ import android.os.Build;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
 import android.text.Html;
+import android.text.format.Formatter;
 import android.text.method.LinkMovementMethod;
-import android.util.Log;
+import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.widget.CheckBox;
+import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -43,6 +48,7 @@ import androidx.appcompat.app.ActionBarDrawerToggle;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.SearchView;
 import androidx.appcompat.widget.Toolbar;
+import androidx.cardview.widget.CardView;
 import androidx.coordinatorlayout.widget.CoordinatorLayout;
 import androidx.core.view.GravityCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
@@ -80,8 +86,12 @@ import com.tachibana.downloader.ui.main.drawer.DrawerGroup;
 import com.tachibana.downloader.ui.main.drawer.DrawerGroupItem;
 import com.tachibana.downloader.ui.settings.SettingsActivity;
 
+import java.io.IOException;
+import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import io.reactivex.disposables.CompositeDisposable;
 import io.reactivex.disposables.Disposable;
@@ -117,6 +127,7 @@ public class MainActivity extends AppCompatActivity {
     private BaseAlertDialog.SharedViewModel dialogViewModel;
     private BaseAlertDialog aboutDialog;
     private BaseAlertDialog deleteAllDownloadsDialog;
+    private BaseAlertDialog exportDownloadsDialog;
     private PermissionDeniedDialog permDeniedDialog;
     private final ActivityResultLauncher<String> storagePermission = registerForActivityResult(
             new ActivityResultContracts.RequestPermission(),
@@ -132,6 +143,9 @@ public class MainActivity extends AppCompatActivity {
                 }
             });
     private BatteryOptimizationDialog batteryDialog;
+    private List<HashMap<String, String>> exportSelected = new ArrayList<>();
+    String writeContent = "";
+    private List<CardView> exportList = new ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -355,9 +369,59 @@ public class MainActivity extends AppCompatActivity {
                                 deleteAllDownloadsDialog.dismiss();
                                 break;
                         }
+                    } else if (event.dialogTag.equals("export_all_downloads_dialog")) {
+                        switch (event.type) {
+                            case POSITIVE_BUTTON_CLICKED:
+                                writeContent = "";
+                                int i = 0;
+                                for (HashMap<String, String> exportData : exportSelected) {
+                                    CardView current = null;
+                                    for (CardView cardView : exportList) {
+                                        if (cardView.getTag().equals(exportData))
+                                        {
+                                            current = cardView;
+                                            break;
+                                        }
+                                    }
+                                    if (!((CheckBox) current.findViewById(R.id.includeInFile)).isChecked())
+                                        continue;
+                                    writeContent += exportData.get("startPaused") + ";" + exportData.get("filename") + ";" + exportData.get("url");
+                                    if (i != (exportSelected.size() - 1))
+                                        writeContent += "\n";
+                                    i++;
+                                }
+                                Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                                intent.putExtra(Intent.EXTRA_TITLE, "download-navi-export.txt");
+                                intent.setType("*/*");
+                                startActivityForResult(intent, 512256);
+                            case NEGATIVE_BUTTON_CLICKED:
+                                exportDownloadsDialog.dismiss();
+                                exportList = null;
+                                break;
+                        }
                     }
                 });
         disposables.add(d);
+    }
+
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == 512256 && resultCode == Activity.RESULT_OK) {
+            Uri uri = data.getData();
+            try {
+                OutputStream output = this.getContentResolver().openOutputStream(uri);
+                output.write(writeContent.getBytes());
+                output.flush();
+                output.close();
+                writeContent = "";
+            } catch (IOException e) {
+                Toast.makeText(this, "Error", Toast.LENGTH_SHORT).show();
+            }
+        }
+        else if (resultCode == 512256)
+            writeContent = "";
     }
 
     private void showBatteryOptimizationDialog() {
@@ -541,7 +605,64 @@ public class MainActivity extends AppCompatActivity {
         } else if (itemId == R.id.import_menu) {
             //TODO: Add functionality
         } else if (itemId == R.id.export_menu) {
-            //TODO: Add functionality
+            exportDownloadsDialog = BaseAlertDialog.newInstance(
+                    "Export",
+                    "",
+                    R.layout.dialog_export_downloads,
+                    getString(R.string.ok),
+                    getString(R.string.cancel),
+                    null,
+                    false);
+            var fm = getSupportFragmentManager();
+            exportDownloadsDialog.show(fm, "export_all_downloads_dialog");
+            exportSelected.clear();
+//            fm.executePendingTransactions();
+//            exportDownloadsDialog.getView().get
+            Context thisContext = this;
+            Thread thread = new Thread(() -> {
+                try {
+                    // TODO: there is probably better way to do this
+                    TimeUnit.SECONDS.sleep(1);
+//                    TimeUnit.SECONDS.sleep((long) 0.5);
+                    DataRepository repo = RepositoryHelper.getDataRepository(thisContext);
+                    List<DownloadInfo> completedDownloads = new ArrayList<>();
+                    var dialog = exportDownloadsDialog.getDialog();
+        //            LinearLayout exportDownloadsList = findViewById(R.id.exportDownloadsList);
+                    LinearLayout exportDownloadsList = (LinearLayout) dialog.findViewById(R.id.exportDownloadsList);
+//                    LinearLayout exportDownloadsList = (LinearLayout) exportDownloadsDialog.getView();
+                    List<CardView> downloads = new ArrayList<>();
+                    LayoutInflater i = LayoutInflater.from(thisContext);
+                    for (DownloadInfo downloadInfo : repo.getAllInfo()) {
+    //                    LinearLayout ll = (LinearLayout) getLayoutInflater().from(getApplicationContext()).inflate(R.layout.item_download_export_list, exportDownloadsList, false);
+    //                    LinearLayout ll = (LinearLayout) DataBindingUtil.inflate(i, R.layout.item_download_export_list, null, false).getRoot();
+                        CardView ll = (CardView) i.inflate(R.layout.item_download_export_list, null, false);
+                        downloads.add(ll);
+                        // fancy lambda
+                        runOnUiThread(() -> exportDownloadsList.addView(ll));
+                        var current = downloads.get(downloads.indexOf(ll));
+                        ((CheckBox) current.findViewById(R.id.includeInFile)).setChecked(true);
+                        ((CheckBox) current.findViewById(R.id.startPaused)).setChecked(!StatusCode.isStatusCompleted(downloadInfo.statusCode));
+                        ((TextView) current.findViewById(R.id.filename)).setText(downloadInfo.fileName);
+                        String hostname = Utils.getHostFromUrl(downloadInfo.url);
+                        ((TextView) current.findViewById(R.id.status)).setText(thisContext.getString(R.string.download_finished_template,
+                                (hostname == null ? "" : hostname),
+                                (downloadInfo.totalBytes == -1 ? thisContext.getString(R.string.not_available) :
+                                        Formatter.formatFileSize(thisContext, downloadInfo.totalBytes))));
+                        var data = new HashMap<String, String>();
+                        data.put("startPaused", String.valueOf(!StatusCode.isStatusCompleted(downloadInfo.statusCode)));
+                        data.put("filename", downloadInfo.fileName);
+                        data.put("url", downloadInfo.url);
+                        data.put("id", String.valueOf(exportSelected.size()));
+                        current.setTag(data);
+                        exportSelected.add(data);
+                    }
+                    exportList = downloads;
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            });
+            thread.start();
+
         } else if (itemId == R.id.browser_menu) {
             startActivity(new Intent(this, BrowserActivity.class));
         }
