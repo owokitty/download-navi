@@ -527,14 +527,19 @@ public class MainActivity extends AppCompatActivity {
                                 }
                             }
                             else {
-                                boolean success = false;
+                                boolean successFirstTry = false;
+                                boolean successSecondTry = false;
+                                var splitLine = splitNonRegex(line, ";").toArray(new String[0]);
                                 try {
                                     new java.net.URL(line);
-                                    success = true;
+                                    successFirstTry = true;
                                 } catch (MalformedURLException e) {
                                     e.printStackTrace();
+                                    if (splitLine.length > 1) {
+                                        successSecondTry = true;
+                                    }
                                 }
-                                if (success) {
+                                if (successFirstTry) {
                                     String finalFilename = "";
 
                                     int queryIndex = line.indexOf('?');
@@ -556,8 +561,11 @@ public class MainActivity extends AppCompatActivity {
                                     currentData.put("startPaused", String.valueOf(false));
                                     currentData.put("filename", finalFilename);
                                     currentData.put("url", line);
-                                }
-                                else
+                                } else if (successSecondTry) {
+                                    currentData.put("startPaused", splitLine[0]);
+                                    currentData.put("filename", splitLine[2]);
+                                    currentData.put("url", splitLine[3]);
+                                } else
                                     continue;
                             }
                             fullDataList.add(currentData);
