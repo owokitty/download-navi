@@ -37,6 +37,7 @@ import android.text.method.LinkMovementMethod;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.View;
 import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -71,6 +72,7 @@ import com.tachibana.downloader.core.RepositoryHelper;
 import com.tachibana.downloader.core.model.DownloadEngine;
 import com.tachibana.downloader.core.model.data.StatusCode;
 import com.tachibana.downloader.core.model.data.entity.DownloadInfo;
+import com.tachibana.downloader.core.model.data.entity.Header;
 import com.tachibana.downloader.core.settings.SettingsRepository;
 import com.tachibana.downloader.core.storage.DataRepository;
 import com.tachibana.downloader.core.utils.Utils;
@@ -86,11 +88,15 @@ import com.tachibana.downloader.ui.main.drawer.DrawerGroup;
 import com.tachibana.downloader.ui.main.drawer.DrawerGroupItem;
 import com.tachibana.downloader.ui.settings.SettingsActivity;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 import io.reactivex.disposables.CompositeDisposable;
@@ -128,6 +134,7 @@ public class MainActivity extends AppCompatActivity {
     private BaseAlertDialog aboutDialog;
     private BaseAlertDialog deleteAllDownloadsDialog;
     private BaseAlertDialog exportDownloadsDialog;
+    private BaseAlertDialog importDownloadsDialog;
     private PermissionDeniedDialog permDeniedDialog;
     private final ActivityResultLauncher<String> storagePermission = registerForActivityResult(
             new ActivityResultContracts.RequestPermission(),
@@ -143,9 +150,11 @@ public class MainActivity extends AppCompatActivity {
                 }
             });
     private BatteryOptimizationDialog batteryDialog;
-    private List<HashMap<String, String>> exportSelected = new ArrayList<>();
+    private final List<HashMap<String, String>> exportSelected = new ArrayList<>();
+    private final List<DownloadInfo> importSelected = new ArrayList<>();
     String writeContent = "";
     private List<CardView> exportList = new ArrayList<>();
+    private HashMap<DownloadInfo, Boolean> shouldGetPaused = new HashMap<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -400,6 +409,42 @@ public class MainActivity extends AppCompatActivity {
                                 exportList = null;
                                 break;
                         }
+                    } else if (event.dialogTag.equals("import_downloads_dialog")) {
+                        switch (event.type) {
+                            case POSITIVE_BUTTON_CLICKED:
+                                Context thisContext = this;
+                                for (DownloadInfo downloadInfo : importSelected) {
+//                                    if (shouldGetPaused.containsKey(downloadInfo))
+//                                        if (shouldGetPaused.get(downloadInfo))
+//                                            continue;
+                                    ArrayList<Header> headers = new ArrayList<>();
+                                    Thread thread = new Thread(() -> {
+                                        DataRepository repo = RepositoryHelper.getDataRepository(thisContext);
+                                        /* TODO: rewrite to WorkManager */
+                                        /* Sync wait inserting */
+                                        try {
+                                            Thread t = new Thread(() -> {
+                                                if (pref.replaceDuplicateDownloads())
+                                                    repo.replaceInfoByUrl(downloadInfo, headers);
+                                                else
+                                                    repo.addInfo(downloadInfo, headers);
+                                            });
+                                            t.start();
+                                            t.join();
+
+                                        } catch (InterruptedException e) {
+                                            return;
+                                        }
+                                    });
+                                    thread.start();
+                                    engine.runDownload(downloadInfo);
+                                }
+                            case NEGATIVE_BUTTON_CLICKED:
+                                importDownloadsDialog.dismiss();
+                                importSelected.clear();
+                                shouldGetPaused.clear();
+                                break;
+                        }
                     }
                 });
         disposables.add(d);
@@ -422,7 +467,169 @@ public class MainActivity extends AppCompatActivity {
         }
         else if (resultCode == 512256)
             writeContent = "";
+        if (requestCode == 256512 && resultCode == Activity.RESULT_OK) {
+            try {
+                String fullData = readTextFromUri(data.getData());
+
+                importDownloadsDialog = BaseAlertDialog.newInstance(
+                        "Import",
+                        "The following downloads will be imported and automatically started.",
+                        R.layout.dialog_export_downloads,
+                        getString(R.string.ok),
+                        getString(R.string.cancel),
+                        null,
+                        false);
+                var fm = getSupportFragmentManager();
+                importDownloadsDialog.show(fm, "import_downloads_dialog");
+                List<HashMap<String, String>> fullDataList = new ArrayList<>();
+                shouldGetPaused.clear();
+                importSelected.clear();
+                Context thisContext = this;
+                Thread thread = new Thread(() -> {
+                    try {
+                        // TODO: there is probably better way to do this
+                        TimeUnit.SECONDS.sleep(1);
+
+                        var dialog = importDownloadsDialog.getDialog();
+                        LinearLayout exportDownloadsList = (LinearLayout) dialog.findViewById(R.id.exportDownloadsList);
+                        List<CardView> downloads = new ArrayList<>();
+                        LayoutInflater i = LayoutInflater.from(thisContext);
+                        DataRepository repo = RepositoryHelper.getDataRepository(thisContext);
+
+                        List<DownloadInfo> generatedDownloadInfo = new ArrayList<>();
+
+                        String[] lines = splitNonRegex(fullData, "\n").toArray(new String[0]);
+//                        var lines = .toArray();
+                        for (int i1 = 0; i1 < lines.length; i1++) {
+                            var line = lines[i1];
+                            if (line.equals(""))
+                                continue;
+                            // checking if line is valid
+//                            var splitLine = line.split(Pattern.quote(";"));
+                            var splitLine = splitNonRegex(line, ";").toArray(new String[0]);
+                            var currentData = new HashMap<String, String>();
+                            if (splitLine.length > 0) {
+                                // valid?
+                                currentData.put("startPaused", splitLine[0]);
+                                currentData.put("filename", splitLine[2]);
+                                currentData.put("url", splitLine[3]);
+                            } else {
+                                // invalid?
+                                continue;
+                            }
+                            fullDataList.add(currentData);
+                        }
+
+                        // creating download info
+                        for (HashMap<String, String> dataMap : fullDataList) {
+                            SettingsRepository pref = RepositoryHelper.getSettingsRepository(getApplicationContext());
+
+                            // should be saved with export file, but uhhh
+                            Uri dirPath = Uri.parse(pref.saveDownloadsIn());
+
+                            var url = dataMap.get("url");
+                            var fileName = dataMap.get("filename");
+                            var startPaused = dataMap.get("startPaused");
+
+                            DownloadInfo info = new DownloadInfo(dirPath, url, fileName);
+                            info.userAgent = pref.userAgent();
+
+                            info.dateAdded = System.currentTimeMillis();
+                            shouldGetPaused.put(info, Boolean.valueOf(startPaused));
+                            generatedDownloadInfo.add(info);
+                        }
+
+//                        ArrayList<Header> headers = new ArrayList<>();
+//                        headers.add(new Header(info.id, "ETag", params.getEtag()));
+//                        if (!TextUtils.isEmpty(params.getReferer())) {
+//                            headers.add(new Header(info.id, "Referer", params.getReferer()));
+//                        }
+//
+//                        /* TODO: rewrite to WorkManager */
+//                        /* Sync wait inserting */
+//                        try {
+//                            Thread t = new Thread(() -> {
+//                                if (pref.replaceDuplicateDownloads())
+//                                    repo.replaceInfoByUrl(info, headers);
+//                                else
+//                                    repo.addInfo(info, headers);
+//                            });
+//                            t.start();
+//                            t.join();
+//
+//                        } catch (InterruptedException e) {
+//                            return;
+//                        }
+//
+//                        engine.runDownload(info);
+
+                        for (DownloadInfo downloadInfo : generatedDownloadInfo) {
+                            //                    LinearLayout ll = (LinearLayout) getLayoutInflater().from(getApplicationContext()).inflate(R.layout.item_download_export_list, exportDownloadsList, false);
+                            //                    LinearLayout ll = (LinearLayout) DataBindingUtil.inflate(i, R.layout.item_download_export_list, null, false).getRoot();
+                            CardView ll = (CardView) i.inflate(R.layout.item_download_export_list, null, false);
+                            downloads.add(ll);
+                            // fancy lambda
+                            runOnUiThread(() -> exportDownloadsList.addView(ll));
+                            var current = downloads.get(downloads.indexOf(ll));
+//                            ((CheckBox) current.findViewById(R.id.includeInFile)).setChecked(true);
+//                            ((CheckBox) current.findViewById(R.id.includeInFile)).setText("Include in import");
+//                            ((CheckBox) current.findViewById(R.id.startPaused)).setChecked(!StatusCode.isStatusCompleted(downloadInfo.statusCode));
+                            runOnUiThread(() -> current.findViewById(R.id.startPaused).setVisibility(View.GONE));
+                            runOnUiThread(() -> current.findViewById(R.id.includeInFile).setVisibility(View.GONE));
+                            ((TextView) current.findViewById(R.id.filename)).setText(downloadInfo.fileName);
+                            String hostname = Utils.getHostFromUrl(downloadInfo.url);
+                            ((TextView) current.findViewById(R.id.status)).setText(thisContext.getString(R.string.download_finished_template,
+                                    (hostname == null ? "" : hostname),
+                                    (downloadInfo.totalBytes == -1 ? thisContext.getString(R.string.not_available) :
+                                            Formatter.formatFileSize(thisContext, downloadInfo.totalBytes))));
+
+//                            engine.runDownload(downloadInfo);
+                            importSelected.add(downloadInfo);
+                        }
+//                        exportList = downloads;
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                });
+                thread.start();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
     }
+
+    // i've got headache by using regex
+    public static List<String> splitNonRegex(String input, String delim) {
+        List<String> l = new ArrayList<String>();
+        int offset = 0;
+
+        while (true) {
+            int index = input.indexOf(delim, offset);
+            if (index == -1) {
+                l.add(input.substring(offset));
+                return l;
+            } else {
+                l.add(input.substring(offset, index));
+                offset = (index + delim.length());
+            }
+        }
+    }
+
+    private String readTextFromUri(Uri uri) throws IOException {
+        StringBuilder stringBuilder = new StringBuilder();
+        try (InputStream inputStream =
+                     getContentResolver().openInputStream(uri);
+             BufferedReader reader = new BufferedReader(
+                     new InputStreamReader(Objects.requireNonNull(inputStream)))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                stringBuilder.append(line);
+                stringBuilder.append('\n');
+            }
+        }
+        return stringBuilder.toString();
+    }
+
 
     private void showBatteryOptimizationDialog() {
         var fm = getSupportFragmentManager();
@@ -603,7 +810,12 @@ public class MainActivity extends AppCompatActivity {
             closeOptionsMenu();
             shutdown();
         } else if (itemId == R.id.import_menu) {
-            //TODO: Add functionality
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            intent.setType("*/*");
+
+            startActivityForResult(intent, 256512);
         } else if (itemId == R.id.export_menu) {
             exportDownloadsDialog = BaseAlertDialog.newInstance(
                     "Export",
