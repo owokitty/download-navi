@@ -25,6 +25,17 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:minWidth="@dimen/min_width_dialog"
-            android:orientation="vertical"/>
+            android:orientation="vertical">
+            <TextView
+                android:id="@+id/downloadNoHeader"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_toEndOf="@id/partial_support_warning_img"
+                android:layout_centerInParent="true"
+                android:textColor="?attr/colorWarning"
+                android:text="No DownloadNavi header has been detected in this file. Trying to use it anyway..."
+                android:visibility="gone"/>
+        </LinearLayout>>
+
     </androidx.core.widget.NestedScrollView>
 </layout>

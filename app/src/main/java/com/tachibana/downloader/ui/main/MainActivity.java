@@ -75,6 +75,7 @@ import com.tachibana.downloader.core.model.data.entity.DownloadInfo;
 import com.tachibana.downloader.core.model.data.entity.Header;
 import com.tachibana.downloader.core.settings.SettingsRepository;
 import com.tachibana.downloader.core.storage.DataRepository;
+import com.tachibana.downloader.core.utils.DownloadUtils;
 import com.tachibana.downloader.core.utils.Utils;
 import com.tachibana.downloader.receiver.NotificationReceiver;
 import com.tachibana.downloader.service.DownloadService;
@@ -93,6 +94,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.MalformedURLException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -383,6 +385,7 @@ public class MainActivity extends AppCompatActivity {
                             case POSITIVE_BUTTON_CLICKED:
                                 writeContent = "";
                                 int i = 0;
+                                writeContent += "#DownloadNavi\n";
                                 for (HashMap<String, String> exportData : exportSelected) {
                                     CardView current = null;
                                     for (CardView cardView : exportList) {
@@ -497,8 +500,8 @@ public class MainActivity extends AppCompatActivity {
                         DataRepository repo = RepositoryHelper.getDataRepository(thisContext);
 
                         List<DownloadInfo> generatedDownloadInfo = new ArrayList<>();
-
                         String[] lines = splitNonRegex(fullData, "\n").toArray(new String[0]);
+                        boolean headerOk = lines[0].equals("#DownloadNavi");
 //                        var lines = .toArray();
                         for (int i1 = 0; i1 < lines.length; i1++) {
                             var line = lines[i1];
@@ -506,16 +509,56 @@ public class MainActivity extends AppCompatActivity {
                                 continue;
                             // checking if line is valid
 //                            var splitLine = line.split(Pattern.quote(";"));
-                            var splitLine = splitNonRegex(line, ";").toArray(new String[0]);
                             var currentData = new HashMap<String, String>();
-                            if (splitLine.length > 0) {
-                                // valid?
-                                currentData.put("startPaused", splitLine[0]);
-                                currentData.put("filename", splitLine[2]);
-                                currentData.put("url", splitLine[3]);
-                            } else {
-                                // invalid?
-                                continue;
+                            if (!headerOk)
+                            {
+                                runOnUiThread(() -> exportDownloadsList.findViewById(R.id.downloadNoHeader).setVisibility(View.VISIBLE));
+                            }
+                            if (headerOk) {
+                                var splitLine = splitNonRegex(line, ";").toArray(new String[0]);
+                                if (splitLine.length > 1) {
+                                    // valid?
+                                    currentData.put("startPaused", splitLine[0]);
+                                    currentData.put("filename", splitLine[2]);
+                                    currentData.put("url", splitLine[3]);
+                                } else {
+                                    // invalid?
+                                    continue;
+                                }
+                            }
+                            else {
+                                boolean success = false;
+                                try {
+                                    new java.net.URL(line);
+                                    success = true;
+                                } catch (MalformedURLException e) {
+                                    e.printStackTrace();
+                                }
+                                if (success) {
+                                    String finalFilename = "";
+
+                                    int queryIndex = line.indexOf('?');
+                                    /* If there is a query string strip it, same as desktop browsers */
+                                    if (queryIndex > 0)
+                                        line = line.substring(0, queryIndex);
+
+                                    if (!line.endsWith("/")) {
+                                        int index = line.lastIndexOf('/') + 1;
+                                        if (index > 0) {
+                                            String rawFilename = line.substring(index);
+                                            finalFilename = DownloadUtils.autoDecodePercentEncoding(rawFilename);
+                                            if (finalFilename == null) {
+                                                finalFilename = rawFilename;
+                                            }
+                                        }
+                                    }
+
+                                    currentData.put("startPaused", String.valueOf(false));
+                                    currentData.put("filename", finalFilename);
+                                    currentData.put("url", line);
+                                }
+                                else
+                                    continue;
                             }
                             fullDataList.add(currentData);
                         }
