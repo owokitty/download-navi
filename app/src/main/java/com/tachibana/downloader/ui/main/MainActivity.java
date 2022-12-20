@@ -27,11 +27,13 @@ import android.app.SearchManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Resources;
+import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
 import android.text.Html;
+import android.text.TextUtils;
 import android.text.format.Formatter;
 import android.text.method.LinkMovementMethod;
 import android.view.LayoutInflater;
@@ -68,14 +70,20 @@ import com.h6ah4i.android.widget.advrecyclerview.animator.GeneralItemAnimator;
 import com.h6ah4i.android.widget.advrecyclerview.animator.RefactoredDefaultItemAnimator;
 import com.h6ah4i.android.widget.advrecyclerview.expandable.RecyclerViewExpandableItemManager;
 import com.tachibana.downloader.R;
+import com.tachibana.downloader.core.HttpConnection;
 import com.tachibana.downloader.core.RepositoryHelper;
+import com.tachibana.downloader.core.exception.HttpException;
+import com.tachibana.downloader.core.exception.NormalizeUrlException;
 import com.tachibana.downloader.core.model.DownloadEngine;
 import com.tachibana.downloader.core.model.data.StatusCode;
 import com.tachibana.downloader.core.model.data.entity.DownloadInfo;
 import com.tachibana.downloader.core.model.data.entity.Header;
 import com.tachibana.downloader.core.settings.SettingsRepository;
 import com.tachibana.downloader.core.storage.DataRepository;
+import com.tachibana.downloader.core.system.SystemFacadeHelper;
+import com.tachibana.downloader.core.urlnormalizer.NormalizeUrl;
 import com.tachibana.downloader.core.utils.DownloadUtils;
+import com.tachibana.downloader.core.utils.MimeTypeUtils;
 import com.tachibana.downloader.core.utils.Utils;
 import com.tachibana.downloader.receiver.NotificationReceiver;
 import com.tachibana.downloader.service.DownloadService;
@@ -94,7 +102,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.ConnectException;
+import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
+import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -422,6 +433,12 @@ public class MainActivity extends AppCompatActivity {
 //                                            continue;
                                     ArrayList<Header> headers = new ArrayList<>();
                                     Thread thread = new Thread(() -> {
+                                        var fetchedData = fetchDownloadData(downloadInfo.url);
+                                        if (fetchedData != null) {
+                                            downloadInfo.mimeType = (String) fetchedData.get("mime");
+                                            downloadInfo.totalBytes = (long) fetchedData.get("totalBytes");
+                                            downloadInfo.partialSupport = (boolean) fetchedData.get("partialSupport");
+                                        }
                                         DataRepository repo = RepositoryHelper.getDataRepository(thisContext);
                                         /* TODO: rewrite to WorkManager */
                                         /* Sync wait inserting */
@@ -438,9 +455,9 @@ public class MainActivity extends AppCompatActivity {
                                         } catch (InterruptedException e) {
                                             return;
                                         }
+                                        engine.runDownload(downloadInfo);
                                     });
                                     thread.start();
-                                    engine.runDownload(downloadInfo);
                                 }
                             case NEGATIVE_BUTTON_CLICKED:
                                 importDownloadsDialog.dismiss();
@@ -931,6 +948,235 @@ public class MainActivity extends AppCompatActivity {
         }
 
         return true;
+    }
+
+    public HashMap<String, Object> fetchDownloadData(String url)
+    {
+        final String[] finalUrl = {url};
+        SettingsRepository pref = RepositoryHelper.getSettingsRepository(getApplicationContext());
+        final boolean[] connectWithReferer = new boolean[] {false};
+
+//        HttpConnection connection;
+//        try {
+//            connection = new HttpConnection(url);
+//        } catch (MalformedURLException | GeneralSecurityException e) {
+//            e.printStackTrace();
+//            return null;
+//        }
+//        connection.setTimeout(800);
+//        connection.setReferer(url);
+//        connection.contentRangeLength(true);
+//
+//        NetworkInfo netInfo = SystemFacadeHelper.getSystemFacade(this).getActiveNetworkInfo();
+//        if (netInfo == null || !netInfo.isConnected())
+////            return new ConnectException("Network is disconnected");
+//            return null;
+//
+//        connection.setListener(new HttpConnection.Listener() {
+//            @Override
+//            public void onConnectionCreated(HttpURLConnection conn)
+//            {
+//                String userAgent = pref.userAgent();
+//                if (conn.getRequestProperty("User-Agent") == null && !TextUtils.isEmpty(userAgent)) {
+//                    conn.addRequestProperty("User-Agent", userAgent);
+//                }
+//            }
+//
+//            @Override
+//            public void onResponseHandle(HttpURLConnection conn, int code, String message)
+//            {
+//                if (code == HttpURLConnection.HTTP_OK ||
+//                        code == HttpURLConnection.HTTP_PARTIAL) {
+//                    connectWithReferer[0] = viewModel.get()
+//                            .parseOkHeaders(conn, connectWithReferer[0]);
+//                } else {
+//                    err[0] = new HttpException("Failed to fetch link, response code: " + code, code);
+//                }
+//            }
+//
+//            @Override
+//            public void onMoved(String newUrl, boolean permanently)
+//            {
+//                if (viewModel.get() == null)
+//                    return;
+//
+//                try {
+//                    viewModel.get().params.setUrl(NormalizeUrl.normalize(newUrl));
+//
+//                } catch (NormalizeUrlException e) {
+//                    err[0] = e;
+//                }
+//            }
+//
+//            @Override
+//            public void onIOException(IOException e)
+//            {
+//                err[0] = e;
+//            }
+//
+//            @Override
+//            public void onTooManyRedirects()
+//            {
+//                err[0] = new HttpException("Too many redirects");
+//            }
+//        });
+//        connection.run();
+        HashMap<String, Object> fakeParams = new HashMap<>();
+        fakeParams.put("url", url);
+        do {
+            HttpConnection connection;
+            try {
+                connection = new HttpConnection(finalUrl[0]);
+            } catch (Exception e) {
+                return null;
+            }
+            connection.setTimeout(10000);
+            connection.setReferer(
+                    finalUrl[0]
+            );
+            connection.contentRangeLength(true);
+
+            NetworkInfo netInfo = SystemFacadeHelper.getSystemFacade(this).getActiveNetworkInfo();
+            if (netInfo == null || !netInfo.isConnected())
+                return null;
+
+            connection.setListener(new HttpConnection.Listener() {
+                @Override
+                public void onConnectionCreated(HttpURLConnection conn)
+                {
+                    String userAgent = pref.userAgent();
+                    if (conn.getRequestProperty("User-Agent") == null && !TextUtils.isEmpty(userAgent)) {
+                        conn.addRequestProperty("User-Agent", userAgent);
+                    }
+                }
+
+                @Override
+                public void onResponseHandle(HttpURLConnection conn, int code, String message)
+                {
+                    if (code == HttpURLConnection.HTTP_OK ||
+                            code == HttpURLConnection.HTTP_PARTIAL) {
+                        connectWithReferer[0] = parseOkHeadersStandalone(conn, connectWithReferer[0], fakeParams);
+                    } else {
+//                        err[0] = new HttpException("Failed to fetch link, response code: " + code, code);
+                    }
+                }
+
+                @Override
+                public void onMoved(String newUrl, boolean permanently)
+                {
+                    try {
+                        finalUrl[0] = NormalizeUrl.normalize(newUrl);
+
+                    } catch (NormalizeUrlException e) {
+//                        err[0] = e;
+                    }
+                }
+
+                @Override
+                public void onIOException(IOException e)
+                {
+//                    err[0] = e;
+                }
+
+                @Override
+                public void onTooManyRedirects()
+                {
+//                    err[0] = new HttpException("Too many redirects");
+                }
+            });
+            connection.run();
+
+        } while (connectWithReferer[0]);
+        return fakeParams;
+    }
+
+    private boolean parseOkHeadersStandalone(HttpURLConnection conn, boolean needsRefererPrevValue, HashMap<String, Object> params)
+    {
+        String contentDisposition = conn.getHeaderField("Content-Disposition");
+        String contentLocation = conn.getHeaderField("Content-Location");
+        String tmpUrl = conn.getURL().toString();
+
+        String mimeType = Intent.normalizeMimeType(conn.getContentType());
+        /* Try to determine the MIME type later by the filename extension */
+        if ("application/octet-stream".equals(mimeType))
+            mimeType = null;
+
+//        String fileName = DownloadUtils.getHttpFileName(
+//                fs,
+//                tmpUrl,
+//                contentDisposition,
+//                contentLocation,
+//                mimeType
+//        );
+
+        String fileName = "";
+
+        int queryIndex = tmpUrl.indexOf('?');
+        /* If there is a query string strip it, same as desktop browsers */
+        if (queryIndex > 0)
+            tmpUrl = tmpUrl.substring(0, queryIndex);
+
+        if (!tmpUrl.endsWith("/")) {
+            int index = tmpUrl.lastIndexOf('/') + 1;
+            if (index > 0) {
+                String rawFilename = tmpUrl.substring(index);
+                fileName = DownloadUtils.autoDecodePercentEncoding(rawFilename);
+                if (fileName == null) {
+                    fileName = rawFilename;
+                }
+            }
+        }
+
+        /* Try to get MIME from filename extension */
+        if (mimeType == null) {
+            String extension = SystemFacadeHelper.getFileSystemFacade(this).getExtension(fileName);
+            if (!TextUtils.isEmpty(extension))
+                mimeType = MimeTypeUtils.getMimeTypeFromExtension(extension);
+        }
+//        boolean currentRefererEmpty = TextUtils.isEmpty(params.getReferer());
+        boolean currentRefererEmpty = true;
+        boolean needsReferer = currentRefererEmpty &&
+                Utils.needsReferer(mimeType, SystemFacadeHelper.getFileSystemFacade(this).getExtension(fileName));
+        if (needsReferer && !needsRefererPrevValue) {
+            return true;
+        } else if (!needsReferer && needsRefererPrevValue) {
+            if (currentRefererEmpty) {
+                params.put("referer", params.get("url"));
+            }
+        }
+
+        params.put("filename", fileName);
+        if (mimeType != null)
+            params.put("mime", mimeType);
+
+        params.put("ETag", conn.getHeaderField("ETag"));
+        final String transferEncoding = conn.getHeaderField("Transfer-Encoding");
+        if (transferEncoding == null) {
+            try {
+                params.put("totalBytes", Long.parseLong(conn.getHeaderField("Content-Length")));
+            } catch (NumberFormatException e) {
+                params.put("totalBytes", -1);
+            }
+        } else {
+            params.put("totalBytes", -1);
+        }
+        if ((long) params.get("totalBytes") == -1) {
+            var bytes = DownloadUtils.parseContentRangeFullSize(
+                    conn.getHeaderField("Content-Range")
+            );
+            params.put("totalBytes", bytes);
+        }
+        params.put("partialSupport",
+                "bytes".equalsIgnoreCase(conn.getHeaderField("Accept-Ranges")) ||
+                        conn.getHeaderField("Content-Range") != null
+        );
+
+        /* The number of pieces can't be more than the number of bytes */
+        long total = (long) params.get("totalBytes");
+//        if (total > 0)
+//            maxNumPieces.set(total < maxNumPieces.get() ? (int)total : DownloadInfo.MAX_PIECES);
+
+        return false;
     }
 
     private void pauseAll() {
