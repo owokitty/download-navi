@@ -103,10 +103,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.net.ConnectException;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
-import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -217,6 +215,8 @@ public class MainActivity extends AppCompatActivity {
         tabLayout = findViewById(R.id.download_list_tabs);
         viewPager = findViewById(R.id.download_list_viewpager);
         fab = findViewById(R.id.add_fab);
+        if (!pref.useDownloadDialog())
+            fab.hide();
         clear = findViewById(R.id.purge_list);
         clear.hide();
         drawerItemsList = findViewById(R.id.drawer_items_list);
@@ -263,6 +263,10 @@ public class MainActivity extends AppCompatActivity {
                     clear.show();
                 else
                     clear.hide();
+                if (!pref.useDownloadDialog())
+                    fab.hide();
+                else
+                    fab.show();
             }
 
             @Override
@@ -434,7 +438,7 @@ public class MainActivity extends AppCompatActivity {
 //                                            continue;
                                     ArrayList<Header> headers = new ArrayList<>();
                                     Thread thread = new Thread(() -> {
-                                        var fetchedData = fetchDownloadData(downloadInfo.url);
+                                        var fetchedData = fetchDownloadData(downloadInfo.url, thisContext);
                                         if (fetchedData != null) {
                                             // TODO: Probably should fill more variables
                                             // but this is enough to start download properly :)
@@ -473,23 +477,54 @@ public class MainActivity extends AppCompatActivity {
         disposables.add(d);
     }
 
-    public void justAddTheDamnDownload(String url, String path, String filename)
-    {
-        Uri pathAsUri = Uri.fromFile(new File(path));
+    public static void justAddTheDamnDownload(String url, Uri pathAsUri, String filename, SettingsRepository pref, Context thisContext, DownloadEngine engine) {
+//        Uri pathAsUri = Uri.fromFile(new File(path));
+
+        if (filename == null) {
+            String fileName = "";
+
+            int queryIndex = url.indexOf('?');
+            /* If there is a query string strip it, same as desktop browsers */
+            if (queryIndex > 0)
+                url = url.substring(0, queryIndex);
+
+            if (!url.endsWith("/")) {
+                int index = url.lastIndexOf('/') + 1;
+                if (index > 0) {
+                    String rawFilename = url.substring(index);
+                    fileName = DownloadUtils.autoDecodePercentEncoding(rawFilename);
+                    if (fileName == null) {
+                        fileName = rawFilename;
+                    }
+                }
+            }
+
+            // makes sense
+            filename = fileName;
+        }
+
         DownloadInfo info = new DownloadInfo(pathAsUri, url, filename);
         info.userAgent = pref.userAgent();
         info.dateAdded = System.currentTimeMillis();
 
         ArrayList<Header> headers = new ArrayList<>();
-        Context thisContext = this;
+//        Context thisContext = this;
         Thread thread = new Thread(() -> {
-            var fetchedData = fetchDownloadData(info.url);
-            if (fetchedData != null) {
+            var fetchedData = fetchDownloadData(info.url, thisContext);
+//            try {
+//                TimeUnit.SECONDS.sleep(1);
+//            } catch (InterruptedException e) {
+//                e.printStackTrace();
+//            }
+            if (fetchedData != null && !fetchedData.containsKey("error")) {
                 // TODO: Probably should fill more variables
                 // but this is enough to start download properly :)
                 info.mimeType = (String) fetchedData.get("mime");
                 info.totalBytes = (long) fetchedData.get("totalBytes");
                 info.partialSupport = (boolean) fetchedData.get("partialSupport");
+            }
+            else if (fetchedData != null && fetchedData.containsKey("error")) {
+                return;
             }
             DataRepository repo = RepositoryHelper.getDataRepository(thisContext);
             /* TODO: rewrite to WorkManager */
@@ -992,10 +1027,11 @@ public class MainActivity extends AppCompatActivity {
         return true;
     }
 
-    public HashMap<String, Object> fetchDownloadData(String url)
+    public static HashMap<String, Object> fetchDownloadData(String url, Context thisContext)
     {
         final String[] finalUrl = {url};
-        SettingsRepository pref = RepositoryHelper.getSettingsRepository(getApplicationContext());
+//        SettingsRepository pref = RepositoryHelper.getSettingsRepository(getApplicationContext());
+        SettingsRepository pref = RepositoryHelper.getSettingsRepository(thisContext);
         final boolean[] connectWithReferer = new boolean[] {false};
 
 //        HttpConnection connection;
@@ -1078,7 +1114,7 @@ public class MainActivity extends AppCompatActivity {
             );
             connection.contentRangeLength(true);
 
-            NetworkInfo netInfo = SystemFacadeHelper.getSystemFacade(this).getActiveNetworkInfo();
+            NetworkInfo netInfo = SystemFacadeHelper.getSystemFacade(thisContext).getActiveNetworkInfo();
             if (netInfo == null || !netInfo.isConnected())
                 return null;
 
@@ -1097,9 +1133,10 @@ public class MainActivity extends AppCompatActivity {
                 {
                     if (code == HttpURLConnection.HTTP_OK ||
                             code == HttpURLConnection.HTTP_PARTIAL) {
-                        connectWithReferer[0] = parseOkHeadersStandalone(conn, connectWithReferer[0], fakeParams);
+                        connectWithReferer[0] = parseOkHeadersStandalone(conn, connectWithReferer[0], fakeParams, thisContext);
                     } else {
 //                        err[0] = new HttpException("Failed to fetch link, response code: " + code, code);
+                        fakeParams.put("error", new HttpException("Failed to fetch link, response code: " + code, code));
                     }
                 }
 
@@ -1111,6 +1148,7 @@ public class MainActivity extends AppCompatActivity {
 
                     } catch (NormalizeUrlException e) {
 //                        err[0] = e;
+                        fakeParams.put("error", e);
                     }
                 }
 
@@ -1118,12 +1156,14 @@ public class MainActivity extends AppCompatActivity {
                 public void onIOException(IOException e)
                 {
 //                    err[0] = e;
+                    fakeParams.put("error", e);
                 }
 
                 @Override
                 public void onTooManyRedirects()
                 {
 //                    err[0] = new HttpException("Too many redirects");
+                    fakeParams.put("error", new HttpException("Too many redirects"));
                 }
             });
             connection.run();
@@ -1132,7 +1172,7 @@ public class MainActivity extends AppCompatActivity {
         return fakeParams;
     }
 
-    private boolean parseOkHeadersStandalone(HttpURLConnection conn, boolean needsRefererPrevValue, HashMap<String, Object> params)
+    private static boolean parseOkHeadersStandalone(HttpURLConnection conn, boolean needsRefererPrevValue, HashMap<String, Object> params, Context thisContext)
     {
         String contentDisposition = conn.getHeaderField("Content-Disposition");
         String contentLocation = conn.getHeaderField("Content-Location");
@@ -1171,14 +1211,15 @@ public class MainActivity extends AppCompatActivity {
 
         /* Try to get MIME from filename extension */
         if (mimeType == null) {
-            String extension = SystemFacadeHelper.getFileSystemFacade(this).getExtension(fileName);
+            String extension = SystemFacadeHelper.getFileSystemFacade(thisContext).getExtension(fileName);
             if (!TextUtils.isEmpty(extension))
                 mimeType = MimeTypeUtils.getMimeTypeFromExtension(extension);
         }
+        boolean currentRefererEmpty = TextUtils.isEmpty((CharSequence) params.get("referer"));
 //        boolean currentRefererEmpty = TextUtils.isEmpty(params.getReferer());
-        boolean currentRefererEmpty = true;
+//        boolean currentRefererEmpty = true;
         boolean needsReferer = currentRefererEmpty &&
-                Utils.needsReferer(mimeType, SystemFacadeHelper.getFileSystemFacade(this).getExtension(fileName));
+                Utils.needsReferer(mimeType, SystemFacadeHelper.getFileSystemFacade(thisContext).getExtension(fileName));
         if (needsReferer && !needsRefererPrevValue) {
             return true;
         } else if (!needsReferer && needsRefererPrevValue) {
