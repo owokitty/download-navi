@@ -435,6 +435,8 @@ public class MainActivity extends AppCompatActivity {
                                     Thread thread = new Thread(() -> {
                                         var fetchedData = fetchDownloadData(downloadInfo.url);
                                         if (fetchedData != null) {
+                                            // TODO: Probably should fill more variables
+                                            // but this is enough to start download properly :)
                                             downloadInfo.mimeType = (String) fetchedData.get("mime");
                                             downloadInfo.totalBytes = (long) fetchedData.get("totalBytes");
                                             downloadInfo.partialSupport = (boolean) fetchedData.get("partialSupport");
