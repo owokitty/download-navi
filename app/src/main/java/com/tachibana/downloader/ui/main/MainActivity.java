@@ -613,8 +613,8 @@ public class MainActivity extends AppCompatActivity {
                                 if (splitLine.length > 1) {
                                     // valid?
                                     currentData.put("startPaused", splitLine[0]);
-                                    currentData.put("filename", splitLine[2]);
-                                    currentData.put("url", splitLine[3]);
+                                    currentData.put("filename", splitLine[1]);
+                                    currentData.put("url", splitLine[2]);
                                 } else {
                                     // invalid?
                                     continue;
@@ -657,8 +657,8 @@ public class MainActivity extends AppCompatActivity {
                                     currentData.put("url", line);
                                 } else if (successSecondTry) {
                                     currentData.put("startPaused", splitLine[0]);
-                                    currentData.put("filename", splitLine[2]);
-                                    currentData.put("url", splitLine[3]);
+                                    currentData.put("filename", splitLine[1]);
+                                    currentData.put("url", splitLine[2]);
                                 } else
                                     continue;
                             }
