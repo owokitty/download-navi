@@ -439,7 +439,7 @@ public class MainActivity extends AppCompatActivity {
                                     ArrayList<Header> headers = new ArrayList<>();
                                     Thread thread = new Thread(() -> {
                                         var fetchedData = fetchDownloadData(downloadInfo.url, thisContext);
-                                        if (fetchedData != null) {
+                                        if (fetchedData != null && !fetchedData.containsKey("error")) {
                                             // TODO: Probably should fill more variables
                                             // but this is enough to start download properly :)
                                             downloadInfo.mimeType = (String) fetchedData.get("mime");
@@ -523,9 +523,9 @@ public class MainActivity extends AppCompatActivity {
                 info.totalBytes = (long) fetchedData.get("totalBytes");
                 info.partialSupport = (boolean) fetchedData.get("partialSupport");
             }
-            else if (fetchedData != null && fetchedData.containsKey("error")) {
-                return;
-            }
+//            else if (fetchedData != null && fetchedData.containsKey("error")) {
+//                return;
+//            }
             DataRepository repo = RepositoryHelper.getDataRepository(thisContext);
             /* TODO: rewrite to WorkManager */
             /* Sync wait inserting */
