@@ -90,6 +90,7 @@
             android:contentDescription="@string/pause"
             android:padding="3dp"
             android:scaleType="fitXY"
-            android:text="Start paused" />
+            android:text="Start paused"
+            android:visibility="gone" />
     </RelativeLayout>
 </androidx.cardview.widget.CardView>
