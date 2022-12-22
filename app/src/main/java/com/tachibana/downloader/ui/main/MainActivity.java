@@ -98,6 +98,7 @@ import com.tachibana.downloader.ui.main.drawer.DrawerGroupItem;
 import com.tachibana.downloader.ui.settings.SettingsActivity;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -470,6 +471,45 @@ public class MainActivity extends AppCompatActivity {
                     }
                 });
         disposables.add(d);
+    }
+
+    public void justAddTheDamnDownload(String url, String path, String filename)
+    {
+        Uri pathAsUri = Uri.fromFile(new File(path));
+        DownloadInfo info = new DownloadInfo(pathAsUri, url, filename);
+        info.userAgent = pref.userAgent();
+        info.dateAdded = System.currentTimeMillis();
+
+        ArrayList<Header> headers = new ArrayList<>();
+        Context thisContext = this;
+        Thread thread = new Thread(() -> {
+            var fetchedData = fetchDownloadData(info.url);
+            if (fetchedData != null) {
+                // TODO: Probably should fill more variables
+                // but this is enough to start download properly :)
+                info.mimeType = (String) fetchedData.get("mime");
+                info.totalBytes = (long) fetchedData.get("totalBytes");
+                info.partialSupport = (boolean) fetchedData.get("partialSupport");
+            }
+            DataRepository repo = RepositoryHelper.getDataRepository(thisContext);
+            /* TODO: rewrite to WorkManager */
+            /* Sync wait inserting */
+            try {
+                Thread t = new Thread(() -> {
+                    if (pref.replaceDuplicateDownloads())
+                        repo.replaceInfoByUrl(info, headers);
+                    else
+                        repo.addInfo(info, headers);
+                });
+                t.start();
+                t.join();
+
+            } catch (InterruptedException e) {
+                return;
+            }
+            engine.runDownload(info);
+        });
+        thread.start();
     }
 
     @Override
